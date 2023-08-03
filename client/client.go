@@ -47,6 +47,14 @@ const (
 	dataPushEventType = "DA-TA_PU-SH"
 )
 
+var (
+	defaultOpts = &options{
+		queueSize:      1000,
+		batchSize:      100,
+		tickerInterval: 200 * time.Millisecond,
+	}
+)
+
 // Option is an option for NewClient.
 type Option func(*options)
 
@@ -73,20 +81,16 @@ func WithInterval(val time.Duration) Option {
 
 // NewClient creates a new client for W3bstream.
 func NewClient(url string, apiKey string, opts ...Option) *Client {
-	defaultOpts := &options{
-		queueSize:      1000,
-		batchSize:      100,
-		tickerInterval: 200 * time.Millisecond,
-	}
+	op := defaultOpts
 	for _, opt := range opts {
-		opt(defaultOpts)
+		opt(op)
 	}
 	cc := &Client{
-		queue:  make(chan *event, defaultOpts.queueSize),
-		buf:    make([]*event, 0, defaultOpts.batchSize),
+		queue:  make(chan *event, op.queueSize),
+		buf:    make([]*event, 0, op.batchSize),
 		url:    url,
 		apiKey: apiKey,
-		cfg:    defaultOpts,
+		cfg:    op,
 	}
 	go cc.worker()
 	return cc

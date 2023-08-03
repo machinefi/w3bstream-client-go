@@ -14,6 +14,37 @@ import (
 	"go.uber.org/goleak"
 )
 
+func TestOption(t *testing.T) {
+	require := require.New(t)
+
+	t.Run("Default", func(t *testing.T) {
+		cli := NewClient("test", "key")
+		require.Equal(*defaultOpts, *cli.cfg)
+	})
+
+	t.Run("QueueSize", func(t *testing.T) {
+		cli := NewClient("test", "key", WithQueueSize(10))
+		require.Equal(10, int(cli.cfg.queueSize))
+		require.Equal(defaultOpts.batchSize, cli.cfg.batchSize)
+		require.Equal(defaultOpts.tickerInterval, cli.cfg.tickerInterval)
+	})
+
+	t.Run("BatchSize", func(t *testing.T) {
+		cli := NewClient("test", "key", WithBatchSize(10))
+		require.Equal(defaultOpts.queueSize, cli.cfg.queueSize)
+		require.Equal(10, int(cli.cfg.batchSize))
+		require.Equal(defaultOpts.tickerInterval, cli.cfg.tickerInterval)
+	})
+
+	t.Run("Interval", func(t *testing.T) {
+		cli := NewClient("test", "key", WithInterval(10*time.Second))
+		require.Equal(defaultOpts.queueSize, cli.cfg.queueSize)
+		require.Equal(defaultOpts.batchSize, cli.cfg.batchSize)
+		require.Equal(10*time.Second, cli.cfg.tickerInterval)
+	})
+
+}
+
 func TestNewEvent(t *testing.T) {
 	require := require.New(t)
 
