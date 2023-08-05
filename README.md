@@ -40,15 +40,15 @@ import (
 	"github.com/machinefi/w3bstream-client-go/client"
 )
 
-resp, err := cli.PublishEventSync(
+err := cli.PublishEvent(
     &Header{
-        DeviceID: "device_id",
+        DeviceID: "id",
     },
     []byte("payload"),
 )
 ```
 
-### Publish Event Asynchronously with Error Handler
+### Publish Event Asynchronously with Response Error Handler
 
 ``` go
 import (
@@ -56,12 +56,12 @@ import (
 )
 
 cli := NewClient("http_route", "api_key", WithErrHandler(func(err error) {
-        fmt.Println(err)
-    }))
+    fmt.Println(err)
+}))
 
-resp, err := cli.PublishEventSync(
+err := cli.PublishEvent(
     &Header{
-        DeviceID: "device_id",
+        DeviceID: "id",
     },
     []byte("payload"),
 )
