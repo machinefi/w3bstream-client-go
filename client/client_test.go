@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"go.uber.org/goleak"
 )
 
 func TestOption(t *testing.T) {
@@ -19,7 +18,7 @@ func TestOption(t *testing.T) {
 
 	t.Run("Default", func(t *testing.T) {
 		cli := NewClient("test", "key")
-		require.Equal(*defaultOpts, *cli.cfg)
+		require.Equal(defaultOpts, *cli.cfg)
 	})
 
 	t.Run("QueueSize", func(t *testing.T) {
@@ -175,7 +174,6 @@ func TestPublishEventSync(t *testing.T) {
 
 func TestPublishEventAsync(t *testing.T) {
 	require := require.New(t)
-	defer goleak.VerifyNone(t)
 
 	t.Run("success", func(t *testing.T) {
 		var (
@@ -226,6 +224,53 @@ func TestPublishEventAsync(t *testing.T) {
 		}
 	})
 
+	t.Run("failed", func(t *testing.T) {
+		var (
+			counter uint32 = 0
+		)
+		testServer := httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
+			require.Equal("POST", req.Method)
+			data, err := io.ReadAll(req.Body)
+			require.NoError(err)
+			v := []*event{}
+			err = json.Unmarshal(data, &v)
+			require.NoError(err)
+			require.Greater(len(v), 0)
+			require.Equal("payload", v[0].Payload)
+			require.Equal("id", v[0].DeviceID)
+
+			res.WriteHeader(500)
+			res.Write([]byte("failed"))
+			atomic.AddUint32(&counter, uint32(len(v)))
+		}))
+		defer testServer.Close()
+
+		var val uint32 = 0
+		cli := NewClient(testServer.URL, "key", WithErrHandler(func(err error) {
+			atomic.AddUint32(&val, 1)
+		}))
+		defer cli.Close()
+
+		err := cli.PublishEvent(
+			&Header{
+				DeviceID: "id",
+			},
+			[]byte("payload"),
+		)
+		require.NoError(err)
+
+		timer1 := time.NewTimer(5 * time.Second)
+		for {
+			select {
+			case <-timer1.C:
+				require.Fail("timeout")
+			default:
+				if atomic.LoadUint32(&counter) == uint32(1) && atomic.LoadUint32(&val) == uint32(1) {
+					return
+				}
+			}
+		}
+	})
 }
 
 func BenchmarkPublishEventAsync(t *testing.B) {

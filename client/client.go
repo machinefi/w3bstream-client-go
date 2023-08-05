@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
@@ -19,6 +20,7 @@ type (
 		buf    []*event
 		url    string
 		apiKey string
+		onErr  uint32
 		cfg    *options
 	}
 
@@ -26,7 +28,11 @@ type (
 		queueSize      uint32
 		batchSize      uint32
 		tickerInterval time.Duration
+		errHandler     ErrHanlder
 	}
+
+	// ErrHanlder is an error handler.
+	ErrHanlder func(err error)
 
 	// Header is a header of an event.
 	Header struct {
@@ -45,10 +51,11 @@ type (
 
 const (
 	dataPushEventType = "DA-TA_PU-SH"
+	sleepTime         = 10 * time.Second
 )
 
 var (
-	defaultOpts = &options{
+	defaultOpts = options{
 		queueSize:      1000,
 		batchSize:      100,
 		tickerInterval: 200 * time.Millisecond,
@@ -79,18 +86,25 @@ func WithInterval(val time.Duration) Option {
 	}
 }
 
+// WithErrHandler sets the error handler.
+func WithErrHandler(val ErrHanlder) Option {
+	return func(opts *options) {
+		opts.errHandler = val
+	}
+}
+
 // NewClient creates a new client for W3bstream.
 func NewClient(url string, apiKey string, opts ...Option) *Client {
 	op := defaultOpts
 	for _, opt := range opts {
-		opt(op)
+		opt(&op)
 	}
 	cc := &Client{
 		queue:  make(chan *event, op.queueSize),
 		buf:    make([]*event, 0, op.batchSize),
 		url:    url,
 		apiKey: apiKey,
-		cfg:    op,
+		cfg:    &op,
 	}
 	go cc.worker()
 	return cc
@@ -131,6 +145,9 @@ func (c *Client) PublishEvent(header *Header, payload []byte) error {
 	if len(header.DeviceID) == 0 {
 		return errors.New("device_id is required")
 	}
+	if c.cfg.errHandler == nil && atomic.LoadUint32(&c.onErr) == 1 {
+		return errors.Errorf("an error happened when sending the message, pls resend the message in %s", sleepTime)
+	}
 	select {
 	case c.queue <- newEvent(header, payload):
 		return nil
@@ -144,6 +161,10 @@ func (c *Client) worker() {
 	asyncSend := func(reqs []*event) {
 		resp, err := c.send(reqs)
 		if err != nil {
+			if c.cfg.errHandler != nil {
+				c.cfg.errHandler(err)
+				return
+			}
 			log.Println("an error occurred when publishing the data to W3bstream: ", err)
 			return
 		}
@@ -151,8 +172,24 @@ func (c *Client) worker() {
 		if resp.StatusCode >= 400 {
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {
+				if c.cfg.errHandler != nil {
+					c.cfg.errHandler(err)
+					return
+				}
 				log.Println("an error occurred when publishing the data to W3bstream: ", err)
+				return
 			}
+			if c.cfg.errHandler != nil {
+				c.cfg.errHandler(fmt.Errorf("an error occurred when publishing the data to W3bstream: status_code %d, body: %s", resp.StatusCode, string(body)))
+				return
+			}
+			atomic.StoreUint32(&c.onErr, 1)
+			defer func() {
+				go func() {
+					time.Sleep(sleepTime)
+					atomic.StoreUint32(&c.onErr, 0)
+				}()
+			}()
 			log.Printf("an error occurred when publishing the data to W3bstream: status_code %d, body: %s", resp.StatusCode, body)
 		}
 	}
